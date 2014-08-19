@@ -15,8 +15,11 @@
 
 (def json-form-url "bundledServiceController.xevent?legacy=false&token=")
 
-(defn- pget [creds url & data]
-  (client/get (str url-base url) {:cookie-store (:cookies @creds)}))
+(defn- pget [creds url & [params options]]
+  (client/get (str url-base url) 
+              (merge {:cookie-store (:cookies @creds)
+                      :query-params params
+                      } options)))
 
 (defn- pform [creds url data]
   (client/post (str url-base url) 
@@ -30,13 +33,13 @@
      :as :json
      }))
 
-(defn next-request [creds] 
+(defn- next-request [creds] 
   (dosync 
     (let [id (:request-id @creds)]
       (alter creds assoc :request-id (inc id))
       (str id)))) 
 
-(defn pform-json [creds json]
+(defn- pform-json [creds json]
   (let [req-id (next-request creds)
         url (str json-form-url (:token @creds))
         json-with-id (assoc json :id req-id)
@@ -45,6 +48,13 @@
     (when-let [response (:response (:body (pform creds url form-data)))]
       (:response (get response (keyword req-id)))
       )))
+
+(defn- pjson [creds args]
+  (when-let [resp (pget creds "getJsonData.xevent"
+                    (assoc args :rnd (System/currentTimeMillis))
+                    {:as :json})]
+    (:data (first (:set (:body resp))))
+    ))
 
 (defn- add-cookie 
   [creds ckey cval]
@@ -98,3 +108,24 @@
                      :task "getAccountsSorted"
                      }))
 
+(defn get-categories
+  "Last valid categories"
+  [creds]
+  (pjson creds {:task "categories"}))
+
+(defn get-tags
+  "Last defined tags"
+  [creds]
+  (pjson creds {:task "tags"}))
+
+(defn get-transactions
+  "List transactions, optionally filtered with an options map:
+    :accountId Filter by account
+    :offset int offset into result set
+  "
+  [creds & [args]]
+  (pjson creds (merge {:offset 0
+                       :comparableType 8
+                       :acctChanged "T"
+                       :task "transactions"
+                       } args)))
