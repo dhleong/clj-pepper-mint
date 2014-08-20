@@ -5,7 +5,12 @@
   (:import (org.apache.http.impl.cookie BasicClientCookie))
   )
 
+(def mint-domain "mint.com")
 (def url-base "https://wwws.mint.com/")
+
+;; (def url-base "http://localhost:9090/")
+;; (def mint-domain "localhost")
+
 (def user-agent "Mozilla/5.0  Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.153 Safari/537.36")
 (def browser "chrome")
 (def browser-version 35)
@@ -45,7 +50,7 @@
         json-with-id (assoc json :id req-id)
         form-data {:input (generate-string [json-with-id])}
         ]
-    (when-let [response (:response (:body (pform creds url form-data)))]
+    (when-let [response (-> (pform creds url form-data) :body :response)]
       (:response (get response (keyword req-id)))
       )))
 
@@ -53,13 +58,15 @@
   (when-let [resp (pget creds "getJsonData.xevent"
                     (assoc args :rnd (System/currentTimeMillis))
                     {:as :json})]
-    (:data (first (:set (:body resp))))
-    ))
+    (-> resp :body :set first :data)))
 
 (defn- add-cookie 
   [creds ckey cval]
   (let [store (:cookies @creds)]
-    (.addCookie store (BasicClientCookie. ckey (String/valueOf cval)))))
+    (.addCookie store (doto (BasicClientCookie. ckey (str cval))
+                              (.setDomain mint-domain)
+                              (.setPath "/")
+                              ))))
 
 (defn new-credentials 
   "Create a new, empty credentials object"
@@ -75,7 +82,7 @@
   (let [creds (new-credentials)
              _ (pget creds "login.event?task=L") 
              pod (pform creds "getUserPod.xevent" {:username user})]
-    (add-cookie creds "mintPN" (:mintPN pod))
+    (add-cookie creds "mintPN" (-> pod :body :mintPN))
     (when-let [result (pform creds "loginUserSubmit.xevent"
                          {:username user
                           :password pass
@@ -84,12 +91,12 @@
                           :browserVersion browser-version
                           :os os-name
                           })]
-      (when-let [error (:error (:body result))]
-        (throw (Exception. (:copy (:vError error)))))
+      (when-let [error (-> result :body :error)]
+        (throw (Exception. (-> error :vError :copy))))
       (when-let [json (:body result)]
         (dosync 
           (alter creds assoc :login json)
-          (alter creds assoc :token (:token (:sUser json))))
+          (alter creds assoc :token (-> json :sUser :token)))
         creds))))
 
 (defn get-accounts
@@ -129,3 +136,61 @@
                        :acctChanged "T"
                        :task "transactions"
                        } args)))
+
+(defn create-transaction
+  "Create a new cash transaction;
+   to be used to fake transaction imports.
+  NB: There is currently very little arg validation,
+   and the server seems to silently reject issues, too :(
+  Args should look like: {
+   :accountId 1234 ; apparently ignored, but good to have, I guess?
+   :amount 4.2
+   :category {:id id :name name}
+   :date \"MM/DD/YYYY\"
+   :isExpense bool
+   :isInvestment bool
+   :merchant \"Merchant Name\"
+   :note \"Note, if any\"
+   :tags [1234, 5678] ; set of ids
+  }
+  :category is Optional; if not provided, will just show
+   up as UNCATEGORIZED, it seems
+  "
+  [creds args]
+  (let [form-base {:amount (:amount args)
+                   :cashTxnType "on"
+                   :date (:date args)
+                   :isInvestment (:isInvestment args false)
+                   :merchant (:merchant args)
+                   :mtAccount (:accountId args)
+                   :mtCacheSplitPref 2          ;; ?
+                   :mtCheckNo ""
+                   :mtIsExpense (:isExpense args true)
+                   :mtType "cash"
+                   :note (:note args)
+                   :task "txnadd"
+                   :txnId ":0"                  ;; might be required
+                   ;
+                   :token (:token @creds)
+                   }
+        form2 (if (:tags args)
+               (apply assoc form-base (interleave 
+                                        (map (partial str "tag") (:tags args)) 
+                                        (repeat 2)))
+               form-base)
+
+        form (if (:category args)
+               (assoc form2 
+                   :catId (:id (:category args))
+                   :category (:name (:category args)))
+               form2
+               )
+        ]
+    (when-not (:amount form)
+      (throw (Exception. ":amount is required")))
+    (when-not (:date form)
+      (throw (Exception. ":date is required")))
+    (when-not (:merchant form)
+      (throw (Exception. ":merchant is required")))
+    (pform creds "updateTransaction.xevent" form)
+    ))
