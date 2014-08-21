@@ -202,3 +202,11 @@
       (throw (Exception. ":merchant is required")))
     (:body (pform creds "updateTransaction.xevent" form))
     ))
+
+(defn delete-transaction
+  "Delete a transaction by its id"
+  [creds transaction-id]
+  (:body (pform creds "updateTransaction.xevent" {:task "delete"
+                                                  :txnId transaction-id
+                                                  :token (:token @creds)
+                                                  })))
