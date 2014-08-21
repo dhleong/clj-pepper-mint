@@ -11,31 +11,39 @@
 ;; (def url-base "http://localhost:9090/")
 ;; (def mint-domain "localhost")
 
-(def user-agent "Mozilla/5.0  Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.153 Safari/537.36")
+(def user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.153 Safari/537.36")
 (def browser "chrome")
 (def browser-version 35)
 (def os-name "mac")
 (def referrer (str "https://wwws.mint.com/login.event" 
                    "?task=L&messageId=1&country=US&nextPage=overview.event"))
+(def static-headers {"User-Agent" user-agent
+                     "X-Request-With" "XMLHttpRequest"
+                     "X-NewRelic-ID" "UA4OVVFWGwEGV1VaBwc="
+                     "Referrer" referrer})
 
 (def json-form-url "bundledServiceController.xevent?legacy=false&token=")
+
+(def conn-pool (clj-http.conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 1}))
 
 (defn- pget [creds url & [params options]]
   (client/get (str url-base url) 
               (merge {:cookie-store (:cookies @creds)
                       :query-params params
+                      :headers static-headers
+                      :connection-manager conn-pool
                       } options)))
 
 (defn- pform [creds url data]
   (client/post (str url-base url) 
     {:accept :json
-     :headers {"User-Agent" user-agent
-               "X-Request-With" "XMLHttpRequest"
-               "X-NewRelic-ID" "UA4OVVFWGwEGV1VaBwc="
-               "Referrer" referrer}
+     :headers static-headers
+     :character-encoding "utf-8"
      :form-params data
      :cookie-store (:cookies @creds)
      :as :json
+     :connection-manager conn-pool
+     :decompress-body false
      }))
 
 (defn- next-request [creds] 
@@ -163,7 +171,7 @@
                    :isInvestment (:isInvestment args false)
                    :merchant (:merchant args)
                    :mtAccount (:accountId args)
-                   :mtCacheSplitPref 2          ;; ?
+                   :mtCashSplitPref 2          ;; ?
                    :mtCheckNo ""
                    :mtIsExpense (:isExpense args true)
                    :mtType "cash"
@@ -192,5 +200,5 @@
       (throw (Exception. ":date is required")))
     (when-not (:merchant form)
       (throw (Exception. ":merchant is required")))
-    (pform creds "updateTransaction.xevent" form)
+    (:body (pform creds "updateTransaction.xevent" form))
     ))
